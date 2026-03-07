@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Dub Tracker - r/Animedubs</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+    <link rel="stylesheet" href="css/styles.css?v=3">
+</head>
+<body>
+    <div class="container">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Loading dub releases...</p>
+        </div>
+
+        <div id="error" class="error" style="display: none;">
+            <p>Failed to load releases. Please try again later.</p>
+        </div>
+
+        <div id="releases" class="releases-container">
+            <!-- Releases will be inserted here -->
+        </div>
+
+        <div id="noReleases" class="no-releases" style="display: none;">
+            <p>No dub releases found yet. Check back soon!</p>
+        </div>
+
+        <div class="footer-actions">
+            <button id="refreshBtn" class="btn">🔄 Refresh</button>
+            <span id="lastUpdated" class="last-updated"></span>
+        </div>
+    </div>
+
+    <footer>
+        <p>Monitoring <a href="https://www.reddit.com/r/Animedubs/new/" target="_blank">r/Animedubs</a> • Updates every 10 minutes</p>
+    </footer>
+
+    <script src="js/app.js?v=2"></script>
+</body>
+</html>

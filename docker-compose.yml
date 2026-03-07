@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  anime-dub-tracker:
+    build: .
+    container_name: anime-dub-tracker
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
