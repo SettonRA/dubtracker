@@ -32,6 +32,67 @@ function isDubRelease(title, author) {
   return lc.includes('dub available now on') || lc.includes('full release');
 }
 
+function extractPostFullname(release) {
+  // Check if id is already a Reddit fullname (t3_xxxxx)
+  if (release.id && /^t3_[a-z0-9]+$/i.test(release.id)) {
+    return release.id;
+  }
+  // Extract post ID from the link URL
+  const match = release.link && release.link.match(/\/comments\/([a-z0-9]+)\//i);
+  if (match) return `t3_${match[1]}`;
+  return null;
+}
+
+async function checkForDeletedPosts() {
+  if (dubReleases.length === 0) return 0;
+
+  const fullnames = dubReleases.map(r => extractPostFullname(r)).filter(Boolean);
+  if (fullnames.length === 0) return 0;
+
+  const deletedFullnames = new Set();
+  const BATCH_SIZE = 100;
+
+  for (let i = 0; i < fullnames.length; i += BATCH_SIZE) {
+    const batch = fullnames.slice(i, i + BATCH_SIZE);
+    const url = `https://www.reddit.com/by_id/${batch.join(',')}.json`;
+
+    try {
+      const response = await fetch(url, { headers: REQUEST_HEADERS });
+      if (!response.ok) {
+        console.warn(`Deleted post check returned HTTP ${response.status}, skipping batch`);
+        continue;
+      }
+
+      const data = await response.json();
+      const returnedMap = new Map(
+        (data?.data?.children || []).map(p => [p.data.name, p.data])
+      );
+
+      for (const fullname of batch) {
+        const post = returnedMap.get(fullname);
+        if (!post || post.author === '[deleted]' || post.removed_by_category) {
+          deletedFullnames.add(fullname);
+        }
+      }
+    } catch (err) {
+      console.error('Error during deleted post check:', err.message);
+    }
+  }
+
+  if (deletedFullnames.size > 0) {
+    const before = dubReleases.length;
+    dubReleases = dubReleases.filter(release => {
+      const fn = extractPostFullname(release);
+      return !fn || !deletedFullnames.has(fn);
+    });
+    const removed = before - dubReleases.length;
+    console.log(`Removed ${removed} deleted/removed post(s) from the list`);
+    return removed;
+  }
+
+  return 0;
+}
+
 function mergeReleases(releases) {
   const merged = [...releases, ...dubReleases];
   const deduped = [];
@@ -159,7 +220,9 @@ async function fetchDubReleases() {
     if (addedCount > 0) {
       console.log(`Found ${addedCount} new dub release(s)`);
     }
-    
+
+    await checkForDeletedPosts();
+
     return newReleases;
   } catch (error) {
     console.error('Error fetching RSS feed:', error.message);
@@ -188,6 +251,12 @@ app.get('/api/releases', (req, res) => {
 app.get('/api/refresh', async (req, res) => {
   await fetchDubReleases();
   res.json({ success: true, count: dubReleases.length });
+});
+
+// API endpoint to manually check for and remove deleted posts
+app.get('/api/cleanup', async (req, res) => {
+  const removed = await checkForDeletedPosts();
+  res.json({ success: true, removed, remaining: dubReleases.length });
 });
 
 // Fetch releases on startup
