@@ -9,6 +9,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+    init: true
     restart: unless-stopped
     logging:
       driver: "json-file"
