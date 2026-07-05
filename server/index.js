@@ -29,7 +29,17 @@ let dubReleases = [];
 // Function to check if a post is about a dub release
 function isDubRelease(title, author) {
   const lc = title.toLowerCase();
-  return lc.includes('dub available now on') || lc.includes('full release');
+  const hasEpisode = /\bepisodes?\b/.test(lc);
+  const hasAvailable = lc.includes('available');
+  return (hasEpisode && hasAvailable) || lc.includes('full release');
+}
+
+function normalizeRedditId(id) {
+  if (!id) return id;
+  if (/^t3_[a-z0-9]+$/i.test(id)) return id;
+  const urlMatch = id.match(/\/comments\/([a-z0-9]+)\//i);
+  if (urlMatch) return `t3_${urlMatch[1]}`;
+  return id;
 }
 
 function extractPostFullname(release) {
@@ -46,37 +56,37 @@ function extractPostFullname(release) {
 async function checkForDeletedPosts() {
   if (dubReleases.length === 0) return 0;
 
-  const fullnames = dubReleases.map(r => extractPostFullname(r)).filter(Boolean);
-  if (fullnames.length === 0) return 0;
+  // Only check posts older than 24 hours to reduce API load
+  const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+  const toCheck = dubReleases.filter(r => r.timestamp < cutoff);
+  if (toCheck.length === 0) return 0;
 
   const deletedFullnames = new Set();
-  const BATCH_SIZE = 100;
 
-  for (let i = 0; i < fullnames.length; i += BATCH_SIZE) {
-    const batch = fullnames.slice(i, i + BATCH_SIZE);
-    const url = `https://www.reddit.com/by_id/${batch.join(',')}.json`;
+  for (const release of toCheck) {
+    const fn = extractPostFullname(release);
+    if (!fn) continue;
+
+    const postId = fn.replace(/^t3_/, '');
+    const url = `https://www.reddit.com/r/Animedubs/comments/${postId}.json`;
 
     try {
       const response = await fetch(url, { headers: REQUEST_HEADERS });
-      if (!response.ok) {
-        console.warn(`Deleted post check returned HTTP ${response.status}, skipping batch`);
-        continue;
-      }
-
-      const data = await response.json();
-      const returnedMap = new Map(
-        (data?.data?.children || []).map(p => [p.data.name, p.data])
-      );
-
-      for (const fullname of batch) {
-        const post = returnedMap.get(fullname);
-        if (!post || post.author === '[deleted]' || post.removed_by_category) {
-          deletedFullnames.add(fullname);
+      if (response.status === 404) {
+        deletedFullnames.add(fn);
+      } else if (response.ok) {
+        const data = await response.json();
+        const post = data?.[0]?.data?.children?.[0]?.data;
+        if (post && (post.author === '[deleted]' || post.removed_by_category)) {
+          deletedFullnames.add(fn);
         }
       }
     } catch (err) {
-      console.error('Error during deleted post check:', err.message);
+      // Skip on network error, will retry next cleanup cycle
     }
+
+    // Pace requests to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
   if (deletedFullnames.size > 0) {
@@ -112,7 +122,7 @@ function mergeReleases(releases) {
 
 function mapRssItemToRelease(item) {
   return {
-    id: item.id || item.guid,
+    id: normalizeRedditId(item.id || item.guid),
     title: item.title,
     link: item.link,
     published: item.pubDate,
@@ -125,7 +135,7 @@ function mapRssItemToRelease(item) {
 function mapRedditPostToRelease(post) {
   const postDate = new Date((post.created_utc || 0) * 1000);
   return {
-    id: post.name || post.id,
+    id: post.name || `t3_${post.id}`,
     title: post.title,
     link: `https://www.reddit.com${post.permalink || ''}`,
     published: postDate.toISOString(),
@@ -221,8 +231,6 @@ async function fetchDubReleases() {
       console.log(`Found ${addedCount} new dub release(s)`);
     }
 
-    await checkForDeletedPosts();
-
     return newReleases;
   } catch (error) {
     console.error('Error fetching RSS feed:', error.message);
@@ -270,9 +278,9 @@ async function bootstrapReleases() {
   await fetchDubReleases();
 }
 
-// Schedule to check every 20-40 minutes
+// Schedule to check every 15-25 minutes
 function scheduleRandomFetch() {
-  const min = 20, max = 40; // minutes
+  const min = 15, max = 25; // minutes
   const interval = Math.floor(Math.random() * (max - min + 1)) + min;
   console.log(`Next fetch in ${interval} minutes.`);
   setTimeout(async () => {
@@ -282,8 +290,18 @@ function scheduleRandomFetch() {
   }, interval * 60 * 1000);
 }
 
+// Separate cleanup schedule — every 2 hours, using individual post checks
+function scheduleCleanup() {
+  setTimeout(async () => {
+    console.log('Running scheduled deleted-post cleanup...');
+    await checkForDeletedPosts();
+    scheduleCleanup();
+  }, 2 * 60 * 60 * 1000);
+}
+
 bootstrapReleases().then(() => {
   scheduleRandomFetch();
+  scheduleCleanup();
 });
 
 app.listen(PORT, '0.0.0.0', () => {
