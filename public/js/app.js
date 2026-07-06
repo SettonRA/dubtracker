@@ -57,7 +57,9 @@ function createReleaseCard(release) {
     
     // Check for special episode types
     const normalizedTitle = release.title.toUpperCase();
-    const isPremiere = normalizedTitle.includes('PREMIERE');
+    // Match "Episode 1" but not 10-19: word boundary after the 1 ensures "Episode 10" won't match
+    const isEpisodeOne = /\bEPISODE\s+1\b/.test(normalizedTitle);
+    const isPremiere = normalizedTitle.includes('PREMIERE') || isEpisodeOne;
     const isFinale = normalizedTitle.includes('FINALE') || normalizedTitle.includes('FINAL');
     const isFullRelease = normalizedTitle.includes('FULL RELEASE');
     const titleClass = isPremiere ? 'premiere' : (isFinale ? 'finale' : (isFullRelease ? 'full-release' : ''));
