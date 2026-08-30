@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dubtracker
+  namespace: dubtracker
+spec:
+  selector:
+    app: dubtracker
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

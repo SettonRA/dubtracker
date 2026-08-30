@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dubtracker
+  namespace: dubtracker
+spec:
+  replicas: 1 # stateless but in-memory + polls Reddit; 1 avoids two stores drifting
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: dubtracker
+  strategy:
+    type: Recreate # single replica, no reason to double up on the Reddit poll
+  template:
+    metadata:
+      labels:
+        app: dubtracker
+    spec:
+      containers:
+        - name: dubtracker
+          image: ghcr.io/settonra/dubtracker:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+          readinessProbe:
+            httpGet: { path: /api/releases, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/releases, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 192Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
