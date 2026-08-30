@@ -16,6 +16,13 @@ spec:
       labels:
         app: dubtracker
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # `node` user in node:alpine
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: dubtracker
           image: ghcr.io/settonra/dubtracker:latest
