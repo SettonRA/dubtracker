@@ -12,6 +12,10 @@ RUN npm install --omit=dev
 COPY server/ ./server/
 COPY public/ ./public/
 
+# Persistence lives here (bind-mounted ./data on the host). Run unprivileged.
+RUN mkdir -p /app/data && chown -R node:node /app
+USER node
+
 # Expose port
 EXPOSE 3000
 

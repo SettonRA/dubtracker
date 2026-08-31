@@ -1,7 +1,7 @@
 const express = require('express');
 const Parser = require('rss-parser');
-const cron = require('node-cron');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const parser = new Parser({
@@ -17,14 +17,42 @@ const parser = new Parser({
 
 const PORT = process.env.PORT || 3000;
 const RSS_URL = 'https://www.reddit.com/r/Animedubs/new/.rss';
-const REDDIT_NEW_JSON_URL = 'https://www.reddit.com/r/Animedubs/new.json';
-const STARTUP_HISTORY_DAYS = 5;
 const REQUEST_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
 };
 
-// Store dub releases in memory (in production, use a database)
+// Release list. Kept in memory for serving; persisted to a JSON file on the
+// bind-mounted ./data dir so it survives restarts (Reddit's unauthenticated
+// JSON API 403s server-side, so there's no multi-day backfill to fall back on).
 let dubReleases = [];
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../data');
+const STORE_FILE = path.join(DATA_DIR, 'releases.json');
+
+function loadReleases() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+    if (Array.isArray(parsed)) {
+      dubReleases = parsed;
+      console.log(`Loaded ${dubReleases.length} release(s) from ${STORE_FILE}`);
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('Could not load stored releases:', err.message);
+  }
+}
+
+let saveTimer = null;
+function saveReleases() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(STORE_FILE, JSON.stringify(dubReleases), 'utf8');
+    } catch (err) {
+      console.error('Could not save releases:', err.message);
+    }
+  }, 1000);
+}
 
 // Function to check if a post is about a dub release
 function isDubRelease(title, author) {
@@ -97,6 +125,7 @@ async function checkForDeletedPosts() {
     });
     const removed = before - dubReleases.length;
     console.log(`Removed ${removed} deleted/removed post(s) from the list`);
+    if (removed > 0) saveReleases();
     return removed;
   }
 
@@ -118,6 +147,8 @@ function mergeReleases(releases) {
   dubReleases = deduped
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 100);
+
+  saveReleases();
 }
 
 function mapRssItemToRelease(item) {
@@ -130,77 +161,6 @@ function mapRssItemToRelease(item) {
     contentSnippet: item.contentSnippet || '',
     timestamp: new Date(item.pubDate).getTime()
   };
-}
-
-function mapRedditPostToRelease(post) {
-  const postDate = new Date((post.created_utc || 0) * 1000);
-  return {
-    id: post.name || `t3_${post.id}`,
-    title: post.title,
-    link: `https://www.reddit.com${post.permalink || ''}`,
-    published: postDate.toISOString(),
-    author: post.author || 'Unknown',
-    contentSnippet: post.selftext || '',
-    timestamp: postDate.getTime()
-  };
-}
-
-async function backfillRecentReleases(days = STARTUP_HISTORY_DAYS) {
-  const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
-  const collected = [];
-  let after = null;
-  let page = 0;
-  const maxPages = 15;
-
-  console.log(`Backfilling up to last ${days} day(s) of posts from Reddit JSON...`);
-
-  while (page < maxPages) {
-    const url = `${REDDIT_NEW_JSON_URL}?limit=100${after ? `&after=${after}` : ''}`;
-    const response = await fetch(url, { headers: REQUEST_HEADERS });
-
-    if (!response.ok) {
-      throw new Error(`Reddit JSON fetch failed with status ${response.status}`);
-    }
-
-    const payload = await response.json();
-    const posts = payload?.data?.children || [];
-
-    if (posts.length === 0) {
-      break;
-    }
-
-    let reachedOlderPosts = false;
-
-    for (const postWrap of posts) {
-      const post = postWrap.data;
-      const postTimestamp = (post.created_utc || 0) * 1000;
-
-      if (postTimestamp < cutoff) {
-        reachedOlderPosts = true;
-        continue;
-      }
-
-      if (isDubRelease(post.title, post.author)) {
-        collected.push(mapRedditPostToRelease(post));
-      }
-    }
-
-    after = payload?.data?.after || null;
-    page += 1;
-
-    if (!after || reachedOlderPosts) {
-      break;
-    }
-
-    // Small delay between pages to avoid hammering Reddit.
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-
-  if (collected.length > 0) {
-    mergeReleases(collected);
-  }
-
-  console.log(`Backfill complete: loaded ${collected.length} release(s) from the last ${days} day(s).`);
 }
 
 // Function to fetch and parse Reddit RSS feed
@@ -267,15 +227,16 @@ app.get('/api/cleanup', async (req, res) => {
   res.json({ success: true, removed, remaining: dubReleases.length });
 });
 
-// Fetch releases on startup
+// Load the persisted list, then top it up from RSS — retrying a few times so a
+// transient network/DNS hiccup on boot doesn't leave the list stale.
 async function bootstrapReleases() {
-  try {
-    await backfillRecentReleases(STARTUP_HISTORY_DAYS);
-  } catch (error) {
-    console.error('Startup backfill failed:', error.message);
+  loadReleases();
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const items = await fetchDubReleases();
+    if (items.length > 0 || dubReleases.length > 0) return;
+    console.log(`Startup fetch empty (attempt ${attempt}/5) — retrying in 30s`);
+    await new Promise(resolve => setTimeout(resolve, 30000));
   }
-
-  await fetchDubReleases();
 }
 
 // Schedule to check every 15-25 minutes

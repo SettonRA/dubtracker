@@ -1,18 +1,22 @@
-version: '3.8'
-
 services:
-  anime-dub-tracker:
-    build: .
-    container_name: anime-dub-tracker
+  dubtracker:
+    image: ghcr.io/settonra/dubtracker:latest
+    container_name: dubtracker
     ports:
       - "3001:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
+    volumes:
+      # Release list is persisted here (survives restarts / redeploys).
+      - ./data:/app/data
     init: true
     restart: unless-stopped
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+# Local dev: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`
+# builds from source instead of pulling the GHCR image.

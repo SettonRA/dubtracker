@@ -3,7 +3,7 @@ name: Publish container image
 on:
   push:
     branches: [main]
-    paths-ignore: ['README.md', 'deploy/**', '.gitignore', '.dockerignore']
+    paths-ignore: ['README.md', '.gitignore', '.dockerignore', 'docker-compose*.yml']
   workflow_dispatch:
 
 concurrency:

@@ -1,224 +1,53 @@
 # Anime Dub Tracker
 
-A lightweight web application that monitors [r/Animedubs](https://www.reddit.com/r/Animedubs/) for new dub release announcements and displays them in a clean, easy-to-read interface.
+Lightweight web app that watches [r/Animedubs](https://www.reddit.com/r/Animedubs/)
+for new English-dub release announcements and lists them in a clean UI.
+Served at **https://dubs.cineclark.studio**.
 
-## Features
+## How it works
 
-- 🎬 **Real-time Monitoring** - Checks r/Animedubs RSS feed every 10 minutes
-- 🎨 **Clean Interface** - Modern, responsive web UI with dark theme
-- 🔗 **Direct Links** - Click any release to go straight to the Reddit post
-- ⚡ **Lightweight** - Runs efficiently in a Docker container
-- 🔄 **Auto-refresh** - Web page updates every 5 minutes automatically
-- 🐳 **Docker Ready** - Easy deployment with Docker Compose
+1. Loads the persisted release list from `./data/releases.json` on startup.
+2. Polls the r/Animedubs **RSS feed** every 15–25 min, filters posts that look
+   like dub releases, merges + de-dupes, keeps the 100 most recent.
+3. Every 2 h, checks older posts and drops any that were deleted/removed.
+4. Any change is written back to `./data/releases.json` (debounced 1 s).
+5. Serves a REST API + static frontend (auto-refreshes every 5 min).
 
-## Screenshot
+> Reddit's unauthenticated JSON API 403s server-side, so there's **no multi-day
+> backfill** — the persisted file *is* the history; RSS keeps it current. A
+> brand-new deployment starts with whatever's in the current RSS window and
+> fills in over the following days.
 
-The tracker displays:
-- Release title with link to Reddit post
-- Author and timestamp
-- Brief content preview
-- Manual refresh button
+## Deployment (Docker01)
 
-## Quick Start
-
-### Prerequisites
-
-- Docker and Docker Compose installed on your Docker01 server
-- Port 3000 available (or change in docker-compose.yml)
-
-### Deployment
-
-1. **Copy the project to your Docker01 server:**
-   ```bash
-   scp -r AnimeDubTracker user@docker01:/path/to/projects/
-   ```
-
-2. **SSH into your Docker01 server:**
-   ```bash
-   ssh user@docker01
-   cd /path/to/projects/AnimeDubTracker
-   ```
-
-3. **Build and run with Docker Compose:**
-   ```bash
-   docker-compose up -d
-   ```
-
-4. **Access the tracker:**
-   Open your browser to `http://docker01:3000`
-
-### Alternative: Docker Build
-
-If you prefer to build manually:
+Runs as a compose stack under the standard layout — `/opt/docker/dubtracker/`
+(this repo mirrors that dir 1:1). Image is built + pushed to
+`ghcr.io/settonra/dubtracker:latest` by GitHub Actions on every push to `main`.
 
 ```bash
-# Build the image
-docker build -t anime-dub-tracker .
-
-# Run the container
-docker run -d -p 3000:3000 --name anime-dub-tracker anime-dub-tracker
+cd /opt/docker/dubtracker
+docker compose pull && docker compose up -d
+docker compose logs -f
 ```
 
-## Configuration
+- **Port:** host `3001` → container `3000`
+- **Persistence:** bind mount `./data` (gitignored). Back up = `tar` the stack dir.
+- **NPM:** proxy host 19 (`dubs.cineclark.studio`) → `http://192.168.1.111:3001`.
 
-### Change Port
+## Local dev
 
-Edit `docker-compose.yml`:
-```yaml
-ports:
-  - "8080:3000"  # Change 8080 to your desired port
-```
-
-### Adjust Check Frequency
-
-Edit `server/index.js` line 75:
-```javascript
-// Check every 10 minutes (change the cron expression)
-cron.schedule('*/10 * * * *', () => {
-  // ...
-});
-```
-
-Cron format: `*/X * * * *` where X is minutes
-
-### Customize Keywords
-
-Edit `server/index.js` lines 18-28 to add/remove keywords for filtering:
-```javascript
-const DUB_KEYWORDS = [
-  'dub available',
-  'available now on',
-  // Add your keywords here
-];
-```
-
-## Management
-
-### View Logs
 ```bash
-docker-compose logs -f anime-dub-tracker
+npm install && npm run dev            # http://localhost:3000
+# or containerised:
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-### Stop the Tracker
-```bash
-docker-compose down
-```
+## API
 
-### Restart
-```bash
-docker-compose restart
-```
-
-### Update
-```bash
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-```
-
-## Development
-
-### Local Development (without Docker)
-
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-2. **Run in development mode:**
-   ```bash
-   npm run dev
-   ```
-
-3. **Access locally:**
-   Open `http://localhost:3000`
-
-## API Endpoints
-
-- `GET /api/releases` - Returns JSON with all tracked dub releases
-- `POST /api/refresh` - Manually triggers a refresh of the RSS feed
-
-## Project Structure
-
-```
-AnimeDubTracker/
-├── server/
-│   └── index.js          # Backend server and RSS parser
-├── public/
-│   ├── index.html        # Main web interface
-│   ├── css/
-│   │   └── styles.css    # Styling
-│   └── js/
-│       └── app.js        # Frontend JavaScript
-├── Dockerfile            # Docker image configuration
-├── docker-compose.yml    # Docker Compose setup
-├── package.json          # Node.js dependencies
-└── README.md            # This file
-```
-
-## How It Works
-
-1. **Backend** fetches the r/Animedubs RSS feed every 10 minutes
-2. **Filters** posts based on keywords (dub available, episode names, streaming services)
-3. **Stores** up to 100 most recent releases in memory
-4. **Serves** a REST API and static web interface
-5. **Frontend** auto-refreshes every 5 minutes and displays releases with links
-
-## Reverse Proxy Setup
-
-If you want to access it via a domain (e.g., `anime.yourdomain.com`):
-
-### Using Nginx Proxy Manager
-
-1. Add a new Proxy Host
-2. Domain: `anime.yourdomain.com`
-3. Forward Hostname/IP: `docker01` (or IP)
-4. Forward Port: `3000`
-5. Enable SSL if desired
-
-### Using Nginx
-
-```nginx
-server {
-    listen 80;
-    server_name anime.yourdomain.com;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-## Troubleshooting
-
-### Container won't start
-```bash
-# Check logs
-docker-compose logs
-
-# Verify port isn't in use
-netstat -tulpn | grep 3000
-```
-
-### No releases showing up
-- Check if the RSS feed is accessible: `curl https://www.reddit.com/r/Animedubs/new/.rss`
-- Reddit may rate-limit requests; wait a few minutes
-- Check container logs for errors
-
-### Web page not loading
-- Ensure port 3000 is accessible
-- Check firewall rules
-- Verify container is running: `docker ps`
+- `GET /api/releases` — the tracked releases + `lastUpdated`
+- `GET /api/refresh` — force an RSS fetch now
+- `GET /api/cleanup` — force the deleted-post check now
 
 ## License
 
 MIT
-
-## Credits
-
-Built for tracking anime dub releases from the r/Animedubs community.

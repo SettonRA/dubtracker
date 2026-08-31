@@ -1,0 +1,4 @@
+services:
+  dubtracker:
+    build: .
+    image: dubtracker:dev
